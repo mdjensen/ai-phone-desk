@@ -73,7 +73,8 @@ class Desk:
         return (now or datetime.now(self.cfg.tz)).astimezone(self.cfg.tz)
 
     def render(self, item: dict) -> str:
-        return B.render(B.Brief.from_dict(item["brief"]), item["id"], self.cfg.owner_name)
+        return B.render(B.Brief.from_dict(item["brief"]), item["id"], self.cfg.owner_name,
+                        custom_opener=self.cfg.opener)
 
     def _notify(self, text: str) -> None:
         try:
@@ -100,7 +101,7 @@ class Desk:
         now = self.now(now)
         iid = secrets.token_hex(4)
         item = {"id": iid, "status": "draft" if hold else "proposed", "created_at": now.isoformat(timespec="seconds"),
-                "brief": b.to_dict(), "bubble": {"text": B.render(b, iid, self.cfg.owner_name), "mids": [],
+                "brief": b.to_dict(), "bubble": {"text": B.render(b, iid, self.cfg.owner_name, custom_opener=self.cfg.opener), "mids": [],
                                                  "at_ts": None}}
         if dry_run:
             return item
@@ -173,8 +174,8 @@ class Desk:
         if self.cfg.killed():
             return f"Approved, but the phone desk is switched off, so the call to {who} is on hold."
         if not self.gate.in_window(now):
-            return (f"Approved. It's outside calling hours, so I'll call {who} after "
-                    f"{self.cfg.window_start}:00 and tell you how it went.")
+            return (f"Approved. It's outside calling hours ({self.gate.window_text()}), so I'll call {who} "
+                    f"when they open and tell you how it went.")
         return f"📞 Approved. Calling {who} on the next tick; I'll tell you how it went."
 
     def approve_terminal(self, iid: str, *, now: Optional[datetime] = None) -> str:
@@ -193,6 +194,37 @@ class Desk:
             return "Cancelled; nothing changed."
         return self._record(iid, decision, {"kind": "terminal", "key": f"terminal:{iid}:{secrets.token_hex(8)}"},
                             now)
+
+    def approve_terminal_batch(self, iids: list[str], *, now: Optional[datetime] = None) -> str:
+        """The terminal approver, for a day's list: every bubble is shown, one
+        answer covers them all, and each request still gets its own single-use
+        token bound to its own bubble (the same _record path as ``approve``)."""
+        from .approvers.terminal import TerminalApprover
+        if not isinstance(self.approver, TerminalApprover):
+            return "This desk uses the LoopMessage approver: 👍 each bubble in iMessage instead."
+        now = self.now(now)
+        iids = list(dict.fromkeys(iids))
+        waiting, notes = [], []
+        for iid in iids:
+            it = self.get(iid)
+            if it and it.get("status") == "surfaced":
+                waiting.append((iid, it["bubble"]["text"]))
+            else:
+                notes.append(f"{iid}: isn't waiting on you; left out.")
+        if not waiting:
+            return "\n".join(notes + ["Nothing to approve."])
+        try:
+            decision = self.approver.ask_batch(waiting)
+        except NotApproved as exc:
+            return f"Not done: {exc}."
+        if decision is None:
+            return "\n".join(notes + ["Cancelled; nothing changed."])
+        batch = secrets.token_hex(4)
+        for iid, _ in waiting:
+            res = self._record(iid, decision, {"kind": "terminal", "batch": batch,
+                                               "key": f"terminal:{iid}:{secrets.token_hex(8)}"}, now)
+            notes.append(f"{iid}: {res}")
+        return "\n".join(notes)
 
     def handle_webhook(self, payload: dict, headers: dict, *, now: Optional[datetime] = None) -> dict:
         """A LoopMessage webhook. Reactions on our bubbles become decisions;
@@ -299,7 +331,7 @@ class Desk:
     def _assistant(self, b: B.Brief) -> dict:
         c = self.cfg
         return B.assistant(b, c.owner_name, provider=c.vapi_model_provider, model=c.vapi_model,
-                           voice_provider=c.vapi_voice_provider, voice_id=c.vapi_voice_id)
+                           voice=c.voice, custom_opener=c.opener)
 
     # ── 5. report ────────────────────────────────────────────────────────────
     @staticmethod
@@ -328,10 +360,13 @@ class Desk:
         mins = f" ({max(1, round((r.get('seconds') or 0) / 60))} min)" if r.get("seconds") else ""
         lines = [head + (d.get("outcome") or "ended").replace("_", " ") + mins]
         for label, key in (("Did", "what_they_did"), ("Confirmation", "confirmation"), ("Spoke with", "staff_name"),
-                           ("Money", "money"), ("Left for you", "next_step_for_owner"), ("Check by", "follow_up_by")):
+                           ("Money", "money"), ("Left for you", "next_step_for_owner"), ("Check by", "follow_up_by"),
+                           ("Interest", "interest"), ("Next step", "next_step"), ("Follow up on", "follow_up_on")):
             v = str(d.get(key) or "").strip()
             if v and v.lower() not in ("none", "n/a", "empty", "no"):
                 lines.append(f"- {label}: {v}")
+        if d.get("do_not_call") is True:
+            lines.append("- Asked not to be called again.")
         if len(lines) == 1 and r.get("summary"):
             lines.append(str(r["summary"])[:500])
         return "\n".join(lines)
@@ -448,7 +483,7 @@ class Desk:
                      "model": {"provider": c.vapi_model_provider, "model": c.vapi_model, "temperature": 0,
                                "messages": [{"role": "system", "content": self.LINETEST_PROMPT}],
                                "tools": [{"type": "endCall"}]},
-                     "voice": {"provider": c.vapi_voice_provider, "voiceId": c.vapi_voice_id},
+                     "voice": c.voice,
                      "transcriber": {"provider": "deepgram", "model": "nova-3", "language": "en"},
                      # NIST speaks the time once a minute between ticks
                      "maxDurationSeconds": 85, "silenceTimeoutSeconds": 80,
@@ -490,7 +525,7 @@ class Desk:
         if not it:
             raise RuntimeError(f"no call request {iid}")
         b = B.Brief.from_dict(it["brief"])
-        caller_sys = B.system_prompt(b, self.cfg.owner_name) + self.TEXT_SIM_NOTE
+        caller_sys = B.system_prompt(b, self.cfg.owner_name, custom_opener=self.cfg.opener) + self.TEXT_SIM_NOTE
         desk_sys = B.sim_prompt(b, persona) + "\n\nThis is a text rehearsal: write only what you would say aloud."
         turns: list[tuple[str, str]] = [("desk", "Thanks for calling, front desk, how can I help?")]
         for _ in range(max_turns):

@@ -7,6 +7,7 @@ from conftest import NOON, brief, make_cfg
 
 from phone_desk.approvers.loopmessage import LoopMessageApprover
 from phone_desk.approvers.terminal import TerminalApprover
+from phone_desk import brief as B
 from phone_desk.desk import Desk
 from phone_desk.vapi import Vapi
 
@@ -45,6 +46,49 @@ def test_a_terminal_approval_dials_and_is_bound_to_the_text(tmp_path, fake_vapi)
     desk.approve_terminal(item["id"], now=NOON)
     desk.tick(now=NOON)
     assert len(fake_vapi.posts()) == 1
+
+
+def _batch(tmp_path, fake_vapi, n=3, answer="yes {n}", tty=True):
+    desk = _terminal_desk(tmp_path, fake_vapi, None, tty=tty)
+    iids = [desk.propose(brief(to=f"(312) 555-01{40 + i}"), now=NOON)["id"] for i in range(n)]
+    desk.approver.input_fn = lambda prompt: answer.format(n=n)
+    return desk, iids, desk.approve_terminal_batch(iids, now=NOON)
+
+
+def test_a_batch_shows_every_bubble_and_one_answer_queues_each(tmp_path, fake_vapi):
+    desk, iids, out = _batch(tmp_path, fake_vapi)
+    shown = desk.approver.out.getvalue()
+    tokens = set()
+    for iid in iids:
+        it = desk.get(iid)
+        assert it["bubble"]["text"] in shown and it["status"] == "queued"
+        assert it["approval"]["evidence"]["sha"] == B.content_hash(it["bubble"]["text"])
+        tokens.add(it["approval"]["token"])
+    assert len(tokens) == 3                       # one single-use token per request
+    assert desk.tick(now=NOON)["dialed"] == 3 and len(fake_vapi.posts()) == 3
+    assert desk.tick(now=NOON)["dialed"] == 0     # each token dials once
+
+
+@pytest.mark.parametrize("answer", ["yes", "y", "👍", "yes 2", "", "no"])
+def test_a_batch_needs_yes_and_the_exact_count(tmp_path, fake_vapi, answer):
+    desk, iids, out = _batch(tmp_path, fake_vapi, answer=answer)
+    assert "Cancelled" in out and all(desk.get(i)["status"] == "surfaced" for i in iids)
+
+
+def test_a_batch_refuses_anything_but_a_real_terminal(tmp_path, fake_vapi):
+    desk, iids, out = _batch(tmp_path, fake_vapi, tty=False)
+    assert "not a TTY" in out and all(desk.get(i)["status"] == "surfaced" for i in iids)
+
+
+def test_a_batch_leaves_out_requests_not_waiting_and_keeps_the_cap(tmp_path, fake_vapi):
+    cfg = make_cfg(tmp_path, daily_cap=2)
+    ap = TerminalApprover(out=io.StringIO(), input_fn=lambda prompt: "yes 3", isatty=lambda: True)
+    desk = Desk(cfg, approver=ap, vapi=Vapi(cfg, opener=fake_vapi))
+    iids = [desk.propose(brief(to=f"(312) 555-01{40 + i}"), now=NOON)["id"] for i in range(3)]
+    out = desk.approve_terminal_batch(iids + ["nope1234"], now=NOON)
+    assert "nope1234: isn't waiting on you" in out
+    assert all(desk.get(i)["status"] == "queued" for i in iids)
+    assert desk.tick(now=NOON)["dialed"] == 2     # the daily cap still holds
 
 
 # ── LoopMessage ──────────────────────────────────────────────────────────────

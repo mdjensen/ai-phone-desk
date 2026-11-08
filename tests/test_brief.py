@@ -97,3 +97,62 @@ def test_too_many_facts_and_overlong_fields_are_refused():
         brief(facts=[f"fact {i}" for i in range(B.MAX_FACTS + 1)])
     with pytest.raises(B.BriefError):
         brief(goal="x" * 401)
+
+
+# ── opener, persona, custom voice, outcome fields ────────────────────────────
+@pytest.mark.parametrize("bad", [
+    "Hi, this is Dynamo calling for {owner}. This call is recorded.",          # no AI
+    "Hi, this is an AI assistant calling for {owner}.",                        # no recording notice
+    "Hi, this is Dynamo, a robot, said the chair. This call is recorded.",     # 'said' is not 'AI'
+])
+def test_an_opener_without_both_disclosures_is_refused(bad):
+    with pytest.raises(B.BriefError):
+        B.check_opener(bad)
+    with pytest.raises(B.BriefError):
+        B.render(brief(), "x", OWNER, custom_opener=bad)
+
+
+def test_a_custom_opener_is_what_the_bubble_shows_and_the_agent_says():
+    op = "Hi! I'm Dynamo, an AI robot calling for {owner}. This call is being recorded."
+    b = brief()
+    said = op.replace("{owner}", OWNER)
+    assert said in B.render(b, "x", OWNER, custom_opener=op)
+    prompt = B.assistant(b, OWNER, custom_opener=op)["model"]["messages"][0]["content"]
+    assert f'Open with exactly: "{said}"' in prompt
+    assert B.render(b, "x", OWNER) != B.render(b, "x", OWNER, custom_opener=op)   # so the hash binds it
+
+
+def test_the_persona_is_in_the_bubble_and_the_prompt_and_the_hard_rules_still_win():
+    b = brief(persona="You are Dynamo, a cheerful humanoid robot.\n\nYou book event appearances.")
+    text, prompt = B.render(b, "x", OWNER), B.system_prompt(b, OWNER)
+    assert "Dynamo, a cheerful humanoid robot" in text and "Dynamo, a cheerful humanoid robot" in prompt
+    assert prompt.index("You book event appearances") < prompt.index("HARD RULES.")
+    assert "HARD RULES below override this" in prompt
+
+
+def test_a_persona_is_optional_and_bounded():
+    assert "Persona:" not in B.render(brief(), "x", OWNER)
+    with pytest.raises(B.BriefError):
+        brief(persona="x" * (B.MAX_PERSONA + 1))
+    with pytest.raises(B.BriefError):
+        brief(persona="Card 4111 1111 1111 1111")
+
+
+def test_a_custom_voice_block_replaces_the_stock_voice():
+    v = {"provider": "custom-voice", "server": {"url": "https://tts.example.com/v", "secret": "s",
+                                                "timeoutSeconds": 20}}
+    assert B.assistant(brief(), OWNER, voice=v)["voice"] == v
+    assert B.assistant(brief(), OWNER)["voice"] == {"provider": "vapi", "voiceId": "Elliot"}
+
+
+def test_the_outcome_schema_keeps_the_old_fields_and_adds_the_booking_fields():
+    props = B.OUTCOME_SCHEMA["properties"]
+    for k in ("outcome", "what_they_did", "confirmation", "staff_name", "money", "next_step_for_owner",
+              "follow_up_by", "interest", "contacts", "event_name", "event_dates", "venue", "attendance",
+              "budget_range", "hold_requested_dates", "next_step", "follow_up_on", "best_time", "objections",
+              "do_not_call"):
+        assert k in props
+    assert props["interest"]["enum"] == ["hot", "warm", "cold", "not_now", "no"]
+    contact = props["contacts"]["items"]["properties"]
+    assert contact["decision_maker"]["type"] == contact["sms_consent"]["type"] == "boolean"
+    assert set(B.OUTCOME_SCHEMA["required"]) == {"outcome", "what_they_did", "next_step_for_owner"}

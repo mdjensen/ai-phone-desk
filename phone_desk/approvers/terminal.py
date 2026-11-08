@@ -46,6 +46,18 @@ class TerminalApprover:
             return "skip"
         return None
 
+    def ask_batch(self, items: list[tuple[str, str]]) -> Optional[str]:
+        """One answer for several bubbles: 'approve' | None (cancelled). There is
+        no batch 'drop'; drop one with `phone-desk approve <id>`."""
+        if not self.isatty():
+            raise NotApproved("the terminal approver only answers a real terminal (stdin and stdout are not a TTY)")
+        for _, text in items:
+            print(f"\n{text}", file=self.out)
+        n = len(items)
+        print(f"\n{n} call{'s' if n != 1 else ''}: {', '.join(i for i, _ in items)}\n", file=self.out)
+        ans = (self.input_fn(f"Type 'yes {n}' to place all {n}, anything else to cancel: ") or "").strip()
+        return "approve" if ans.lower() == f"yes {n}" else None
+
     def reprove(self, approval: dict, bubble_text: str, mids: list[str]) -> None:
         ev = approval.get("evidence") or {}
         if ev.get("kind") != "terminal" or ev.get("sha") != content_hash(bubble_text):

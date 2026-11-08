@@ -273,3 +273,29 @@ def test_a_missing_vapi_key_fails_before_the_gate_and_burns_no_approval(desk, cf
     assert "Nothing was dialed" in desk.dial(item["id"], now=NOON)
     assert fake_vapi.requests == []
     assert not any(r["decision"] == "ADMIT" for r in desk.store.lines("ledger.jsonl"))
+
+
+def test_the_custom_voice_and_opener_reach_the_dial(tmp_path, approver, fake_vapi):
+    op = "Hi, I'm Dynamo, an AI robot calling for {owner}. This call is recorded."
+    cfg = make_cfg(tmp_path, vapi_voice_provider="custom-voice", vapi_voice_server_url="https://tts.example.com/v",
+                   vapi_voice_secret="shh", opener=op)
+    desk = Desk(cfg, approver=approver, vapi=Vapi(cfg, opener=fake_vapi))
+    item = desk.propose(brief(persona="You are Dynamo, a humanoid robot."), now=NOON)
+    assert "an AI robot calling for Alex Rivera" in item["bubble"]["text"]
+    approve(desk, item["id"])
+    desk.tick(now=NOON)
+    a = fake_vapi.posts()[0][2]["assistant"]
+    assert a["voice"] == {"provider": "custom-voice",
+                          "server": {"url": "https://tts.example.com/v", "secret": "shh", "timeoutSeconds": 20}}
+    assert "an AI robot calling for Alex Rivera" in a["model"]["messages"][0]["content"]
+    assert "You are Dynamo, a humanoid robot." in a["model"]["messages"][0]["content"]
+
+
+def test_changing_the_opener_after_approval_dials_nothing(tmp_path, approver, fake_vapi):
+    cfg = make_cfg(tmp_path)
+    desk = Desk(cfg, approver=approver, vapi=Vapi(cfg, opener=fake_vapi))
+    item = desk.propose(brief(), now=NOON)
+    approve(desk, item["id"])
+    cfg.opener = "Hi, I'm Dynamo, an AI robot calling for {owner}. This call is recorded."
+    desk.tick(now=NOON)
+    assert fake_vapi.posts() == []

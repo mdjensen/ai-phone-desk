@@ -1,10 +1,12 @@
 """phone-desk: give your agents a phone, with one rule: nothing dials until a human 👍s it.
 
-    phone-desk propose --who .. --to .. --goal .. [--ask ..] [--fallback ..] [--fact ..]... [--hold|--dry-run]
+    phone-desk propose --who .. --to .. --goal .. [--ask ..] [--fallback ..] [--fact ..]...
+                       [--persona ..|--persona-file ..] [--hold|--dry-run]
     phone-desk surface <id>          send a held draft's bubble to the owner
     phone-desk approve <id>          terminal approver: decide at a real terminal
+    phone-desk approve-batch <id>... terminal approver: show every bubble, one answer for all
     phone-desk tick                  run every minute (cron/launchd/systemd): dial, poll, report
-    phone-desk status [<id>]
+    phone-desk status [<id>] [--json]
     phone-desk linetest              dial NIST's public time line (+1 303-499-7111); no approval needed
     phone-desk rehearse <id>         text rehearsal (needs the optional `anthropic` package) or --print
     phone-desk webhook               one LoopMessage webhook JSON on stdin (Authorization via --auth)
@@ -72,6 +74,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     p.add_argument("--voicemail", default="", help="message to leave on voicemail (default: leave none)")
     p.add_argument("--max-minutes", type=int, default=B.DEFAULT_MINUTES)
     p.add_argument("--origin", default="agent", choices=["owner", "agent"])
+    pg = p.add_mutually_exclusive_group()
+    pg.add_argument("--persona", default="", help="who the caller is and how it sounds (shown in the bubble)")
+    pg.add_argument("--persona-file", help="read the persona from this file")
     p.add_argument("--hold", action="store_true", help="record as a draft; `surface <id>` sends it later")
     p.add_argument("--dry-run", action="store_true", help="print the bubble; record and send nothing")
 
@@ -79,9 +84,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     sf.add_argument("iid")
     a = sub.add_parser("approve", help="terminal approver: decide on a request at a real terminal")
     a.add_argument("iid")
+    ab = sub.add_parser("approve-batch", help="terminal approver: approve several requests with one answer")
+    ab.add_argument("iids", nargs="+")
     sub.add_parser("tick", help="dial approved calls in the window, poll calls, report outcomes")
     s = sub.add_parser("status")
     s.add_argument("iid", nargs="?")
+    s.add_argument("--json", action="store_true", help="the list as JSON: id, status, who, to, created_at")
     sub.add_parser("linetest", help="dial NIST's public time line and verify the whole pipe")
     r = sub.add_parser("rehearse", help="play the call out in text against a simulated front desk")
     r.add_argument("iid")
@@ -112,9 +120,17 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 2
 
     if args.cmd == "propose":
+        persona = args.persona
+        if args.persona_file:
+            try:
+                persona = open(args.persona_file, encoding="utf-8").read()
+            except OSError as exc:
+                print(f"refused: cannot read --persona-file: {exc}")
+                return 2
         try:
             b = B.Brief(who=args.who, to=args.to, goal=args.goal, ask=args.ask, fallback=args.fallback,
-                        facts=args.fact, max_minutes=args.max_minutes, voicemail=args.voicemail, origin=args.origin)
+                        facts=args.fact, max_minutes=args.max_minutes, voicemail=args.voicemail, origin=args.origin,
+                        persona=persona)
         except B.BriefError as exc:
             print(f"refused: {exc}")
             return 2
@@ -127,6 +143,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 0
     if args.cmd == "approve":
         print(desk.approve_terminal(args.iid))
+        return 0
+    if args.cmd == "approve-batch":
+        print(desk.approve_terminal_batch(args.iids))
         return 0
     if args.cmd == "tick":
         print(json.dumps(desk.tick()))
@@ -143,7 +162,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         b = B.Brief.from_dict(it["brief"])
         if args.print_only:
             print("=== CALLER (the voice agent's exact instructions) ===\n"
-                  + B.system_prompt(b, desk.cfg.owner_name) + Desk.TEXT_SIM_NOTE)
+                  + B.system_prompt(b, desk.cfg.owner_name, custom_opener=desk.cfg.opener) + Desk.TEXT_SIM_NOTE)
             print("\n=== FRONT DESK (play this in a second chat) ===\n" + B.sim_prompt(b, args.persona))
             return 0
         res = desk.rehearse_text(args.iid, _anthropic_llm(), persona=args.persona)
@@ -175,7 +194,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.iid:
         print(json.dumps(data["items"].get(args.iid), indent=1, ensure_ascii=False, default=str))
         return 0
-    for iid, it in sorted(data["items"].items(), key=lambda kv: kv[1].get("created_at", "")):
+    items = sorted(data["items"].items(), key=lambda kv: kv[1].get("created_at", ""))
+    if args.json:
+        print(json.dumps([{"id": iid, "status": it.get("status"), "who": it["brief"]["who"],
+                           "to": it["brief"]["to"], "created_at": it.get("created_at"),
+                           "updated_at": it.get("updated_at")} for iid, it in items], ensure_ascii=False))
+        return 0
+    for iid, it in items:
         b = it["brief"]
         tag = f" ({b.get('requested_by')} asked)" if b.get("origin") == "external" else ""
         flag = " ⚠️research-flagged" if (it.get("research") or {}).get("flagged") else ""

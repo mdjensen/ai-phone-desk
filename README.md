@@ -135,7 +135,9 @@ These are in its fixed hard rules on every call, and the desk enforces what it c
 call is ever proposed:
 
 - **Claim to be you.** It opens with *"Hi, this is an AI assistant calling on behalf of
-  `OWNER_NAME`. This call is recorded."* and says it's an AI if asked.
+  `OWNER_NAME`. This call is recorded."* and says it's an AI if asked. You can reword the opener
+  with `OPENER`, but the desk refuses to start if it doesn't say "AI" and "recorded" (or
+  "recording").
 - **Give card, bank, SSN, password, PIN or birth-date details.** A brief containing one of these
   as a fact is refused outright. If the business needs one, it asks how you should provide it
   yourself.
@@ -155,7 +157,7 @@ call is ever proposed:
 | Token: unused, under 16 h, this request, sha256 of this exact text | gate | refused; a text mismatch does not burn the token |
 | 👍 re-proven against the vendor at dial time | approver | back to waiting for a 👍 |
 | Kill switch file `<state>/phone-desk.OFF` absent | gate | held |
-| 08:00-20:00 in `OWNER_TZ` | gate | held until the window |
+| 08:00-20:00 in `OWNER_TZ` (and Mon-Fri with `PHONE_DESK_WEEKDAYS_ONLY=1`) | gate | held until the window |
 | Daily cap (10) | gate | held, and you're told once |
 | Not 900/976, not a Caribbean `+1` area code, a valid US number | brief | refused |
 
@@ -262,11 +264,13 @@ Transcript: 2026-10-06-call-3fa9c0d2.md
 
 ```
 phone-desk propose --who .. --to .. --goal .. [--ask ..] [--fallback ..] [--fact ..]... \
-                   [--voicemail ..] [--max-minutes N] [--hold | --dry-run]
+                   [--voicemail ..] [--max-minutes N] [--persona .. | --persona-file PATH] \
+                   [--hold | --dry-run]
 phone-desk surface <id>                 send a held draft's bubble to you
 phone-desk approve <id>                 terminal approver: decide at a real terminal
+phone-desk approve-batch <id>...        terminal approver: every bubble, one "yes N" for all
 phone-desk tick                         every minute: dial, poll, report
-phone-desk status [<id>]
+phone-desk status [<id>] [--json]
 phone-desk linetest                     NIST time line, +1 303-499-7111; no approval
 phone-desk rehearse <id> [--persona ..] [--print]
 phone-desk serve [--host 127.0.0.1 --port 8787]      LoopMessage webhook receiver
@@ -279,6 +283,36 @@ phone-desk external contract | ingest [--agent NAME] | research <id> [--host ..]
 All settings are environment variables (or a `.env` file); see [.env.example](.env.example).
 Required: `OWNER_NAME`, `OWNER_TZ`. To dial: `VAPI_API_KEY`, `VAPI_PHONE_NUMBER_ID`. For
 approval from your phone: `PHONE_DESK_APPROVER=loopmessage` and the `LOOPMESSAGE_*` values.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `PHONE_DESK_WINDOW_START` / `_END` | `8` / `20` | Local hours a call may start, `[start, end)`. Whole hours: `9`, `09` or `09:00`. |
+| `PHONE_DESK_WEEKDAYS_ONLY` | off | `1` also holds calls on Saturday and Sunday. |
+| `PHONE_DESK_DAILY_CAP` | `10` | Dials per local day, all origins together. |
+| `OPENER` | the fixed line | The first thing it says; `{owner}` is filled in. Must contain "AI" and "recorded"/"recording". It is shown in every bubble, so changing it voids approvals not yet dialed. |
+| `VAPI_MODEL_PROVIDER` / `VAPI_MODEL` | `openai` / `gpt-4.1` | The model Vapi runs the call on (e.g. `anthropic` / `claude-sonnet-5-5`). |
+| `VAPI_VOICE_PROVIDER` / `VAPI_VOICE_ID` | `vapi` / `Elliot` | A stock Vapi voice. |
+| `VAPI_VOICE_PROVIDER=custom-voice` + `VAPI_VOICE_SERVER_URL` | | Your own TTS server ([Vapi custom TTS](https://docs.vapi.ai/customization/custom-voices/custom-tts)): the voice block becomes `{"provider": "custom-voice", "server": {"url", "secret", "timeoutSeconds": 20}}`. Must be `https://`. |
+| `VAPI_VOICE_SECRET` | empty | Optional; Vapi sends it to your TTS server as the `X-VAPI-SECRET` header. |
+
+**Persona.** `propose --persona "..."` (or `--persona-file PATH`, up to 2000 characters, blank-line
+paragraphs kept) tells the voice agent who it is and how it sounds. It is printed in the bubble
+like every other field, and the hard rules come after it in the prompt and override it. Facts it
+may share still belong in `--fact`.
+
+**Batch approval.** `phone-desk approve-batch <id>...` is the terminal approver for a day's list. It
+needs a real terminal like `approve`, prints every bubble, and asks once: type `yes N` (N = the
+number of calls shown) to approve them all, anything else to cancel. Requests that aren't waiting
+on you are listed and left out. Each approved request gets its own single-use token bound to its
+own bubble's sha256, with the usual expiry; the calling window and daily cap still apply at dial
+time. There is no batch drop; use `approve <id>` and answer 👎.
+
+**Outcome.** Besides `outcome`, `what_they_did`, `confirmation`, `staff_name`, `money`,
+`next_step_for_owner` and `follow_up_by`, Vapi's structured data can carry booking and sales
+fields: `interest` (`hot`/`warm`/`cold`/`not_now`/`no`), `contacts[]` (`name`, `role`, `phone`,
+`email`, `decision_maker`, `sms_consent`), `event_name`, `event_dates`, `venue`, `attendance`,
+`budget_range`, `hold_requested_dates[]`, `next_step`, `follow_up_on` (YYYY-MM-DD), `best_time`,
+`objections[]` and `do_not_call`. All optional. They land in `result.data` of `status <id>` and in `calls/<date>-call-<id>.json`.
 
 ### State
 

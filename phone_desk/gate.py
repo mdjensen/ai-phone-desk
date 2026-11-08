@@ -56,8 +56,14 @@ class Gate:
         return (now or datetime.now(self.cfg.tz)).astimezone(self.cfg.tz)
 
     def in_window(self, now: Optional[datetime] = None) -> bool:
-        h = self.local(now).hour
-        return self.cfg.window_start <= h < self.cfg.window_end
+        local = self.local(now)
+        if self.cfg.weekdays_only and local.weekday() >= 5:
+            return False
+        return self.cfg.window_start <= local.hour < self.cfg.window_end
+
+    def window_text(self) -> str:
+        days = "Mon-Fri " if self.cfg.weekdays_only else ""
+        return f"{days}{self.cfg.window_start:02d}:00-{self.cfg.window_end:02d}:00 {self.cfg.owner_tz}"
 
     def dials_today(self, now: Optional[datetime] = None) -> int:
         day = self.local(now).strftime("%Y-%m-%d")
@@ -105,8 +111,7 @@ class Gate:
             raise GateDenied(f"the phone desk is switched off ({self.cfg.kill_file.name})", retryable=True)
         if not self.in_window(now):
             self._audit("DENY", now, iid=iid, to=to, reason="outside window")
-            raise GateDenied(f"outside calling hours ({self.cfg.window_start}:00-{self.cfg.window_end}:00 "
-                             f"{self.cfg.owner_tz})", retryable=True)
+            raise GateDenied(f"outside calling hours ({self.window_text()})", retryable=True)
         sha = content_hash(text)
         with self.store.locked():
             if self.dials_today(now) >= self.cfg.daily_cap:

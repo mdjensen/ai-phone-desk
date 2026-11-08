@@ -129,3 +129,17 @@ def test_every_decision_is_in_the_ledger(gate):
     gate.admit(iid="abcd1234", text=TEXT, token=tok, to=GYM, now=NOON)
     decisions = [r["decision"] for r in gate.store.lines("ledger.jsonl")]
     assert decisions == ["MINT", "DENY", "ADMIT"]
+
+
+def test_weekdays_only_keeps_the_window_off_on_weekends(tmp_path):
+    g = Gate(make_cfg(tmp_path, window_start=9, window_end=17, weekdays_only=True), Store(tmp_path / "s"))
+    friday, saturday = NOON.replace(day=9), NOON.replace(day=10)     # 2026-10-09 is a Friday
+    assert friday.weekday() == 4 and g.in_window(friday) and not g.in_window(saturday)
+    assert not g.in_window(saturday.replace(day=11)) and g.in_window(friday.replace(day=12))
+    assert not g.in_window(friday.replace(hour=17)) and g.in_window(friday.replace(hour=9))
+    monday = friday.replace(day=12, hour=9)
+    tok = _mint(g, now=monday)
+    with pytest.raises(GateDenied, match="Mon-Fri 09:00-17:00") as exc:
+        g.admit(iid="abcd1234", text=TEXT, token=tok, to=GYM, now=monday.replace(hour=8))
+    assert exc.value.retryable
+    g.admit(iid="abcd1234", text=TEXT, token=tok, to=GYM, now=monday)

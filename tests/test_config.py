@@ -36,3 +36,36 @@ def test_a_bad_timezone_or_approver_is_refused(tmp_path):
         load(env_file=tmp_path / "none", environ={**base, "OWNER_TZ": "Mars/Olympus"})
     with pytest.raises(ConfigError):
         load(env_file=tmp_path / "none", environ={**base, "OWNER_TZ": "UTC", "PHONE_DESK_APPROVER": "email"})
+
+
+def _load(tmp_path, **env):
+    base = {"OWNER_NAME": "Alex Rivera", "OWNER_TZ": "America/Denver", "PHONE_DESK_STATE_DIR": str(tmp_path)}
+    return load(env_file=tmp_path / "none", environ={**base, **env})
+
+
+def test_a_custom_voice_server_becomes_the_vapi_voice_block(tmp_path):
+    cfg = _load(tmp_path, VAPI_VOICE_PROVIDER="custom-voice", VAPI_VOICE_SERVER_URL="https://tts.example.com/v",
+                VAPI_VOICE_SECRET="shh")
+    assert cfg.voice == {"provider": "custom-voice",
+                         "server": {"url": "https://tts.example.com/v", "secret": "shh", "timeoutSeconds": 20}}
+    assert _load(tmp_path).voice == {"provider": "vapi", "voiceId": "Elliot"}
+    with pytest.raises(ConfigError, match="VAPI_VOICE_SERVER_URL"):
+        _load(tmp_path, VAPI_VOICE_PROVIDER="custom-voice")
+
+
+def test_an_opener_must_keep_the_ai_and_recording_disclosures(tmp_path):
+    ok = "Hi, I'm Dynamo, an AI robot calling for {owner}. This call is recorded."
+    assert _load(tmp_path, OPENER=ok).opener == ok
+    with pytest.raises(ConfigError, match="OPENER"):
+        _load(tmp_path, OPENER="Hi, I'm Dynamo calling for {owner}. This call is recorded.")
+    with pytest.raises(ConfigError, match="OPENER"):
+        _load(tmp_path, OPENER="Hi, I'm Dynamo, an AI robot calling for {owner}.")
+
+
+@pytest.mark.parametrize("start,end", [("9", "17"), ("09", "17"), ("09:00", "17:00")])
+def test_the_window_takes_hours_or_hh_00(tmp_path, start, end):
+    cfg = _load(tmp_path, PHONE_DESK_WINDOW_START=start, PHONE_DESK_WINDOW_END=end, PHONE_DESK_WEEKDAYS_ONLY="1")
+    assert (cfg.window_start, cfg.window_end, cfg.weekdays_only) == (9, 17, True)
+    with pytest.raises(ConfigError):
+        _load(tmp_path, PHONE_DESK_WINDOW_START="09:30")
+    assert _load(tmp_path).weekdays_only is False

@@ -45,6 +45,17 @@ def _value(raw: str) -> str:
     return v.split(" #", 1)[0].split("\t#", 1)[0].strip()
 
 
+def _hour(raw: str, name: str) -> int:
+    """'9', '09' or '09:00' -> 9. Whole hours only."""
+    h, _, m = raw.partition(":")
+    try:
+        if m and int(m) != 0:
+            raise ValueError
+        return int(h)
+    except ValueError:
+        raise ConfigError(f"{name} must be a whole hour like 9 or 09:00, not {raw!r}") from None
+
+
 @dataclass
 class Config:
     owner_name: str
@@ -52,6 +63,7 @@ class Config:
     state_dir: Path
     window_start: int = 8                 # local hours a business may be dialed: [start, end)
     window_end: int = 20
+    weekdays_only: bool = False           # also refuse Saturdays and Sundays
     daily_cap: int = 10                   # dials per local day, all origins together
     external_daily_cap: int = 3           # CALL REQUESTs accepted per external agent per day
     approval_ttl_s: int = 16 * 3600       # a 👍 is for today's call, not one days later
@@ -63,6 +75,9 @@ class Config:
     vapi_model: str = "gpt-4.1"
     vapi_voice_provider: str = "vapi"
     vapi_voice_id: str = "Elliot"
+    vapi_voice_server_url: str = ""       # VAPI_VOICE_PROVIDER=custom-voice: your TTS endpoint
+    vapi_voice_secret: str = ""           # sent by Vapi as the X-VAPI-SECRET header
+    opener: str = ""                      # optional first line; must still say AI + recorded
     loopmessage_api_key: str = ""
     loopmessage_sender: str = ""          # your LoopMessage sender name
     loopmessage_owner_contact: str = ""   # the owner's phone (or iMessage email) that approves
@@ -77,6 +92,16 @@ class Config:
             return ZoneInfo(self.owner_tz)
         except (ZoneInfoNotFoundError, ValueError) as exc:
             raise ConfigError(f"OWNER_TZ {self.owner_tz!r} is not a valid IANA zone") from exc
+
+    @property
+    def voice(self) -> dict:
+        """The Vapi ``voice`` block: a stock voice, or your own TTS server."""
+        if self.vapi_voice_provider == "custom-voice":
+            server = {"url": self.vapi_voice_server_url, "timeoutSeconds": 20}
+            if self.vapi_voice_secret:
+                server["secret"] = self.vapi_voice_secret
+            return {"provider": "custom-voice", "server": server}
+        return {"provider": self.vapi_voice_provider, "voiceId": self.vapi_voice_id}
 
     @property
     def kill_file(self) -> Path:
@@ -104,8 +129,9 @@ def load(env_file: Optional[Path] = None, environ: Optional[dict] = None) -> Con
         owner_name=owner,
         owner_tz=tz,
         state_dir=Path(get("PHONE_DESK_STATE_DIR") or Path.home() / ".phone-desk").expanduser(),
-        window_start=int(get("PHONE_DESK_WINDOW_START", "8")),
-        window_end=int(get("PHONE_DESK_WINDOW_END", "20")),
+        window_start=_hour(get("PHONE_DESK_WINDOW_START", "8"), "PHONE_DESK_WINDOW_START"),
+        window_end=_hour(get("PHONE_DESK_WINDOW_END", "20"), "PHONE_DESK_WINDOW_END"),
+        weekdays_only=get("PHONE_DESK_WEEKDAYS_ONLY").lower() in ("1", "true", "yes", "on"),
         daily_cap=int(get("PHONE_DESK_DAILY_CAP", "10")),
         external_daily_cap=int(get("PHONE_DESK_EXTERNAL_DAILY_CAP", "3")),
         approver=get("PHONE_DESK_APPROVER", "terminal").lower(),
@@ -115,6 +141,9 @@ def load(env_file: Optional[Path] = None, environ: Optional[dict] = None) -> Con
         vapi_model=get("VAPI_MODEL", "gpt-4.1"),
         vapi_voice_provider=get("VAPI_VOICE_PROVIDER", "vapi"),
         vapi_voice_id=get("VAPI_VOICE_ID", "Elliot"),
+        vapi_voice_server_url=get("VAPI_VOICE_SERVER_URL"),
+        vapi_voice_secret=get("VAPI_VOICE_SECRET"),
+        opener=get("OPENER"),
         loopmessage_api_key=get("LOOPMESSAGE_API_KEY"),
         loopmessage_sender=get("LOOPMESSAGE_SENDER_NAME"),
         loopmessage_owner_contact=get("LOOPMESSAGE_OWNER_CONTACT"),
@@ -125,6 +154,14 @@ def load(env_file: Optional[Path] = None, environ: Optional[dict] = None) -> Con
     cfg.tz  # validate early
     if not (0 <= cfg.window_start < cfg.window_end <= 24):
         raise ConfigError("PHONE_DESK_WINDOW_START/END must satisfy 0 <= start < end <= 24")
+    if cfg.vapi_voice_provider == "custom-voice" and not cfg.vapi_voice_server_url.startswith("https://"):
+        raise ConfigError("VAPI_VOICE_PROVIDER=custom-voice needs VAPI_VOICE_SERVER_URL (an https:// URL)")
+    if cfg.opener:
+        from .brief import BriefError, check_opener
+        try:
+            check_opener(cfg.opener)
+        except BriefError as exc:
+            raise ConfigError(f"OPENER: {exc}") from None
     if cfg.approver not in ("terminal", "loopmessage"):
         raise ConfigError("PHONE_DESK_APPROVER must be 'terminal' or 'loopmessage'")
     return cfg
