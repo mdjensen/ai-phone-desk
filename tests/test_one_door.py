@@ -24,8 +24,14 @@ def test_the_package_is_standalone():
         assert not re.search(r"^\s*(from|import)\s+agents\b", p.read_text(), re.M), p
 
 
+def _local_env(p: Path) -> bool:
+    """A gitignored .env / .env.* holds YOUR keys on purpose; it is never committed."""
+    return p.name != ".env.example" and (p.name == ".env" or p.name.startswith(".env."))
+
+
 def test_no_real_looking_keys_in_the_repo():
     pat = re.compile(r"(sk-[A-Za-z0-9]{20,}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})")
     for p in ROOT.rglob("*"):
-        if p.is_file() and ".git" not in p.parts and p.suffix in (".py", ".md", ".toml", ".example", ""):
+        if (p.is_file() and ".git" not in p.parts and not _local_env(p)
+                and p.suffix in (".py", ".md", ".toml", ".example", "")):
             assert not pat.search(p.read_text(errors="ignore")), p
