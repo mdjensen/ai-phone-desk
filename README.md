@@ -100,6 +100,13 @@ That prints the exact bubble you'd approve. Drop `--dry-run` to record it, then
 
 1. Create a [Vapi](https://vapi.ai) account, buy or import an outbound number, and put
    `VAPI_API_KEY` and `VAPI_PHONE_NUMBER_ID` (the number's id, not its digits) in `.env`.
+   **Using an existing Vapi account with your own Twilio number:**
+   - Put `VAPI_API_KEY` (Vapi dashboard → API Keys, the private key) in `.env` yourself. Never
+     paste it into a chat or commit it; `.env` is gitignored.
+   - In the Vapi dashboard, go to Phone Numbers → Import → Twilio and enter the number with your
+     Twilio Account SID and Auth Token.
+   - Copy that imported number's id (not its digits) into `VAPI_PHONE_NUMBER_ID`.
+   - With `.env` filled in, `phone-desk linetest` (next step) is the first live check.
 2. Check the whole pipe first. This dials NIST's public time announcement
    (+1 303-499-7111), a recording that exists for the public to call, and is the one call that
    needs no approval:
