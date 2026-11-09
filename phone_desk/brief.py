@@ -264,6 +264,10 @@ OUTCOME_SCHEMA = {
                        "description": "reasons they gave for hesitating or declining"},
         "do_not_call": {"type": "boolean",
                         "description": "true if they asked not to be called again"},
+        "website_text_ok": {"type": "boolean",
+                            "description": "true if they said yes to a text with the website link"},
+        "website_text_to": {"type": "string",
+                            "description": "the mobile number they gave for that text, digits only, or empty"},
     },
     "required": ["outcome", "what_they_did", "next_step_for_owner"],
 }
