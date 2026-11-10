@@ -275,10 +275,12 @@ OUTCOME_SCHEMA = {
 
 def assistant(b: Brief, owner: str, *, provider: str = "openai", model: str = "gpt-4.1",
               voice_provider: str = "vapi", voice_id: str = "Elliot", name: str = "ai-phone-desk",
-              voice: Optional[dict] = None, custom_opener: str = "") -> dict:
+              voice: Optional[dict] = None, custom_opener: str = "", idle_checkin: float = 0) -> dict:
     """A Vapi transient assistant for this one call. ``voice`` (a full Vapi voice
-    block, e.g. Config.voice for a custom-voice server) overrides voice_provider/id."""
-    return {
+    block, e.g. Config.voice for a custom-voice server) overrides voice_provider/id.
+    ``idle_checkin`` seconds of silence after it speaks (0 = never) make it check the line is
+    still there, or ask again: a quiet pickup or a question lost on the line doesn't stall the call."""
+    a = {
         "name": name[:40],
         "firstMessageMode": "assistant-waits-for-user",
         "model": {"provider": provider, "model": model, "temperature": 0.3,
@@ -295,6 +297,18 @@ def assistant(b: Brief, owner: str, *, provider: str = "openai", model: str = "g
             "structuredDataPlan": {"enabled": True, "schema": OUTCOME_SCHEMA},
         },
     }
+    if idle_checkin:
+        a["hooks"] = [{
+            "on": "customer.speech.timeout",
+            "options": {"timeoutSeconds": idle_checkin, "triggerMaxCount": 3, "triggerResetMode": "onUserSpeech"},
+            "do": [{"type": "say", "prompt": IDLE_CHECKIN}],
+        }]
+    return a
+
+
+IDLE_CHECKIN = ("The line has been quiet for a few seconds since you spoke. In one short sentence: if you "
+                "asked something, ask it again more simply; if you're waiting for someone to come on the "
+                "line, say hello and your name and check they can hear you. Don't apologise or explain.")
 
 
 def sim_prompt(b: Brief, persona: Optional[str] = None) -> str:

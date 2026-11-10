@@ -69,3 +69,24 @@ def test_the_window_takes_hours_or_hh_00(tmp_path, start, end):
     with pytest.raises(ConfigError):
         _load(tmp_path, PHONE_DESK_WINDOW_START="09:30")
     assert _load(tmp_path).weekdays_only is False
+
+
+def test_the_brief_caps_come_from_the_config(tmp_path):
+    from phone_desk import brief as B
+    env = tmp_path / ".env"
+    try:
+        env.write_text("OWNER_NAME=Pat\nOWNER_TZ=America/Denver\nPHONE_DESK_MAX_FACTS=40\nPHONE_DESK_MAX_PERSONA=9000\n")
+        cfg = load(env, environ={})
+        assert (cfg.max_facts, B.MAX_FACTS, B.MAX_PERSONA) == (40, 40, 9000)
+        env.write_text("OWNER_NAME=Pat\nOWNER_TZ=America/Denver\n")
+        load(env, environ={})
+        assert (B.MAX_FACTS, B.MAX_PERSONA) == (12, 2000)
+    finally:
+        B.MAX_FACTS, B.MAX_PERSONA = 12, 2000
+
+
+def test_the_idle_checkin_defaults_on_and_can_be_turned_off(tmp_path):
+    assert _load(tmp_path).idle_checkin == 6
+    assert _load(tmp_path, PHONE_DESK_IDLE_CHECKIN="0").idle_checkin == 0
+    with pytest.raises(ConfigError, match="IDLE_CHECKIN"):
+        _load(tmp_path, PHONE_DESK_IDLE_CHECKIN="1")

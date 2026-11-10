@@ -78,6 +78,9 @@ class Config:
     vapi_voice_server_url: str = ""       # VAPI_VOICE_PROVIDER=custom-voice: your TTS endpoint
     vapi_voice_secret: str = ""           # sent by Vapi as the X-VAPI-SECRET header
     opener: str = ""                      # optional first line; must still say AI + recorded
+    max_facts: int = 12                   # facts per brief (PHONE_DESK_MAX_FACTS)
+    max_persona: int = 2000               # persona characters per brief (PHONE_DESK_MAX_PERSONA)
+    idle_checkin: float = 6.0             # seconds of silence before the agent checks in; 0 = never
     loopmessage_api_key: str = ""
     loopmessage_sender: str = ""          # your LoopMessage sender name
     loopmessage_owner_contact: str = ""   # the owner's phone (or iMessage email) that approves
@@ -144,6 +147,9 @@ def load(env_file: Optional[Path] = None, environ: Optional[dict] = None) -> Con
         vapi_voice_server_url=get("VAPI_VOICE_SERVER_URL"),
         vapi_voice_secret=get("VAPI_VOICE_SECRET"),
         opener=get("OPENER"),
+        max_facts=int(get("PHONE_DESK_MAX_FACTS", "12")),
+        max_persona=int(get("PHONE_DESK_MAX_PERSONA", "2000")),
+        idle_checkin=float(get("PHONE_DESK_IDLE_CHECKIN", "6")),
         loopmessage_api_key=get("LOOPMESSAGE_API_KEY"),
         loopmessage_sender=get("LOOPMESSAGE_SENDER_NAME"),
         loopmessage_owner_contact=get("LOOPMESSAGE_OWNER_CONTACT"),
@@ -162,6 +168,10 @@ def load(env_file: Optional[Path] = None, environ: Optional[dict] = None) -> Con
             check_opener(cfg.opener)
         except BriefError as exc:
             raise ConfigError(f"OPENER: {exc}") from None
+    from . import brief
+    brief.MAX_FACTS, brief.MAX_PERSONA = cfg.max_facts, cfg.max_persona   # briefs read these when validated
+    if cfg.idle_checkin and not 2 <= cfg.idle_checkin <= 60:
+        raise ConfigError("PHONE_DESK_IDLE_CHECKIN must be 0 (off) or 2 to 60 seconds")
     if cfg.approver not in ("terminal", "loopmessage"):
         raise ConfigError("PHONE_DESK_APPROVER must be 'terminal' or 'loopmessage'")
     return cfg

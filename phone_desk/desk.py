@@ -331,7 +331,7 @@ class Desk:
     def _assistant(self, b: B.Brief) -> dict:
         c = self.cfg
         return B.assistant(b, c.owner_name, provider=c.vapi_model_provider, model=c.vapi_model,
-                           voice=c.voice, custom_opener=c.opener)
+                           voice=c.voice, custom_opener=c.opener, idle_checkin=c.idle_checkin)
 
     # ── 5. report ────────────────────────────────────────────────────────────
     @staticmethod

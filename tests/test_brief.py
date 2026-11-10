@@ -156,3 +156,11 @@ def test_the_outcome_schema_keeps_the_old_fields_and_adds_the_booking_fields():
     contact = props["contacts"]["items"]["properties"]
     assert contact["decision_maker"]["type"] == contact["sms_consent"]["type"] == "boolean"
     assert set(B.OUTCOME_SCHEMA["required"]) == {"outcome", "what_they_did", "next_step_for_owner"}
+
+
+def test_an_idle_checkin_hook_is_added_only_when_asked():
+    assert "hooks" not in B.assistant(brief(), OWNER)
+    [hook] = B.assistant(brief(), OWNER, idle_checkin=6)["hooks"]
+    assert hook["on"] == "customer.speech.timeout"
+    assert hook["options"] == {"timeoutSeconds": 6, "triggerMaxCount": 3, "triggerResetMode": "onUserSpeech"}
+    assert hook["do"] == [{"type": "say", "prompt": B.IDLE_CHECKIN}]

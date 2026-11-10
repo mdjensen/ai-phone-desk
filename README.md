@@ -296,6 +296,9 @@ approval from your phone: `PHONE_DESK_APPROVER=loopmessage` and the `LOOPMESSAGE
 | `PHONE_DESK_WINDOW_START` / `_END` | `8` / `20` | Local hours a call may start, `[start, end)`. Whole hours: `9`, `09` or `09:00`. |
 | `PHONE_DESK_WEEKDAYS_ONLY` | off | `1` also holds calls on Saturday and Sunday. |
 | `PHONE_DESK_DAILY_CAP` | `10` | Dials per local day, all origins together. |
+| `PHONE_DESK_MAX_FACTS` | `12` | Facts a brief may carry. |
+| `PHONE_DESK_MAX_PERSONA` | `2000` | Characters a brief's persona may run to. |
+| `PHONE_DESK_IDLE_CHECKIN` | `6` | Seconds of silence after the agent speaks before it checks the line or asks again (up to 3 times); `0` turns it off. |
 | `OPENER` | the fixed line | The first thing it says; `{owner}` is filled in. Must contain "AI" and "recorded"/"recording". It is shown in every bubble, so changing it voids approvals not yet dialed. |
 | `VAPI_MODEL_PROVIDER` / `VAPI_MODEL` | `openai` / `gpt-4.1` | The model Vapi runs the call on (e.g. `anthropic` / `claude-sonnet-5-5`). |
 | `VAPI_VOICE_PROVIDER` / `VAPI_VOICE_ID` | `vapi` / `Elliot` | A stock Vapi voice. |
